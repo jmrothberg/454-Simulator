@@ -67,7 +67,7 @@ def create_training_set_cnn(images, num_templates, templates, num_training_templ
     return np.array(x, dtype=np.float32), np.array(y)
 
 
-def base_calling_cnn(images, num_cycles, num_templates, templates, num_training_templates, window_size, iterations):
+def base_calling_cnn(images, num_cycles, num_templates, templates, num_training_templates, window_size, iterations, auto_train=False):
     print("base_calling_cnn")
     base_colors = {
         'A': (255.0, 0.0, 0.0, 0.0),
@@ -97,25 +97,27 @@ def base_calling_cnn(images, num_cycles, num_templates, templates, num_training_
 
     cnn_input_scale = _INPUT_SCALE_KEY
 
-    if training_files:
+    def _train_fresh():
+        x_tr, y_tr = create_training_set_cnn(images, num_templates, templates, num_training_templates,
+                                              window_size, num_cycles, base_colors)
+        le = LabelEncoder()
+        ohe = OneHotEncoder(sparse_output=False)
+        ie = le.fit_transform(y_tr).reshape(-1, 1)
+        oh = ohe.fit_transform(ie)
+        model = train_cnn_classifier(x_tr, oh, window_size, iterations)
+        return model, le, ohe
+
+    if auto_train:
+        # Train fresh without prompts (used by "run all" mode)
+        cnn, label_encoder, onehot_encoder = _train_fresh()
+    elif training_files:
         print("Available training sets:")
         for i, f in enumerate(training_files):
             print(f"{i + 1}. {f}")
 
         choice = input("Enter the number of the training set to load, or type 'new' to create a new one: ")
         if choice.lower() == 'new':
-            x_train, y_train = create_training_set_cnn(images, num_templates, templates, num_training_templates,
-                                                       window_size, num_cycles, base_colors)
-
-            # Encode the output using one-hot encoding
-            label_encoder = LabelEncoder()
-            onehot_encoder = OneHotEncoder(sparse_output=False)
-            integer_encoded = label_encoder.fit_transform(y_train)
-            integer_encoded = integer_encoded.reshape(len(integer_encoded), 1)
-            onehot_encoded = onehot_encoder.fit_transform(integer_encoded)
-
-            # Fit the CNN classifier
-            cnn = train_cnn_classifier(x_train, onehot_encoded, window_size, iterations)
+            cnn, label_encoder, onehot_encoder = _train_fresh()
 
             save_choice = input("Do you want to save this training set for later use? (y/n): ")
             if save_choice.lower() == 'y':
@@ -141,18 +143,7 @@ def base_calling_cnn(images, num_cycles, num_templates, templates, num_training_
 
     else:
         print("No saved training sets found.")
-        x_train, y_train = create_training_set_cnn(images, num_templates, templates, num_training_templates,
-                                                   window_size, num_cycles, base_colors)
-
-        # Encode the output using one-hot encoding
-        label_encoder = LabelEncoder()
-        onehot_encoder = OneHotEncoder(sparse_output=False)
-        integer_encoded = label_encoder.fit_transform(y_train)
-        integer_encoded = integer_encoded.reshape(len(integer_encoded), 1)
-        onehot_encoded = onehot_encoder.fit_transform(integer_encoded)
-
-        # Fit the CNN classifier
-        cnn = train_cnn_classifier(x_train, onehot_encoded, window_size, iterations)
+        cnn, label_encoder, onehot_encoder = _train_fresh()
 
         save_choice = input("Do you want to save this training set for later use? (y/n): ")
         if save_choice.lower() == 'y':

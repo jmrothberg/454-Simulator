@@ -90,7 +90,30 @@ def extract_window_size(model_filename):
     else:
         return None
 
-def transformer_base_calling(images, num_cycles, num_templates, templates, num_training_templates, window_size):
+def _build_and_train_transformer(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors):
+    """Build a new transformer model, train it on the current images, and return (model, window_size)."""
+    X_train, y_train = create_training_set(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
+    input_layer = Input(shape=(window_size, 4))
+    # d_model=4 requires num_heads * key_dim == 4 (e.g. 2 heads × 2)
+    x = MultiHeadAttention(num_heads=2, key_dim=2)(input_layer, input_layer)
+    x = LayerNormalization(epsilon=1e-6)(Add()([input_layer, x]))
+    x = Dense(64, activation='relu')(x)
+    x = Dropout(0.2)(x)
+    x = Dense(64, activation='relu')(x)
+    x = Dropout(0.2)(x)
+    x = Flatten()(x)
+    output_layer = Dense(4 * window_size)(x)
+    output_layer = tf.reshape(output_layer, (-1, window_size, 4))
+    output_layer = tf.nn.softmax(output_layer, axis=-1)
+    output_layer = Flatten()(output_layer)
+
+    model = Model(inputs=[input_layer], outputs=[output_layer])
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy')
+    _train_transformer_model(model, X_train, y_train)
+    return model
+
+
+def transformer_base_calling(images, num_cycles, num_templates, templates, num_training_templates, window_size, auto_train=False):
     print("transformer_base_calling")
     base_colors = {
         'A': (1.0, 0.0, 0.0, 0.0),
@@ -103,7 +126,11 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
     pattern = re.compile(r'_transformer_model_w\d+\.h5$')
     #model_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if pattern.search(f)]
     model_files = [f for f in os.listdir(folder_path) if pattern.search(f)]
-    if model_files:
+
+    if auto_train:
+        # Train fresh without prompts (used by "run all" mode)
+        transformer_model = _build_and_train_transformer(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
+    elif model_files:
         print("Available models:")
         for i, f in enumerate(model_files):
             print(f"{i + 1}. {f}")
@@ -113,29 +140,8 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
             save_choice = input("Do you want to save this model (hit return to skip): ")
             if save_choice:
                 filename = choice
-            # Create a new model and train it
-            X_train, y_train = create_training_set(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
-            input_layer = Input(shape=(window_size, 4))
-            # d_model=4 requires num_heads * key_dim == 4 (e.g. 2 heads × 2)
-            x = MultiHeadAttention(num_heads=2, key_dim=2)(input_layer, input_layer)
-            x = LayerNormalization(epsilon=1e-6)(Add()([input_layer, x]))
-            x = Dense(64, activation='relu')(x)
-            x = Dropout(0.2)(x)
-            x = Dense(64, activation='relu')(x)
-            x = Dropout(0.2)(x)
-            #x = Flatten()(x)
-            #output_layer = Dense(4 * window_size, activation='softmax')(x)
-            x = Flatten()(x)
-            output_layer = Dense(4 * window_size)(x)
-            output_layer = tf.reshape(output_layer, (-1, window_size, 4))
-            output_layer = tf.nn.softmax(output_layer, axis=-1)
-            output_layer = Flatten()(output_layer)
 
-            transformer_model = Model(inputs=[input_layer], outputs=[output_layer])
-            #transformer_model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
-            transformer_model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy')
-
-            _train_transformer_model(transformer_model, X_train, y_train)
+            transformer_model = _build_and_train_transformer(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
 
             if save_choice:
                 transformer_model.save(os.path.join(folder_path, f"{filename}_transformer_model_w{window_size}.h5"))
@@ -152,28 +158,8 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
         save_choice = input("Do you want to save this model (hit return to skip): ")
         if save_choice:
             filename = input("Enter a filename for the model (without extension): ")
-        # Create a new model and train it
-        X_train, y_train = create_training_set(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
-        input_layer = Input(shape=(window_size, 4))
-        x = MultiHeadAttention(num_heads=2, key_dim=2)(input_layer, input_layer)
-        x = LayerNormalization(epsilon=1e-6)(Add()([input_layer, x]))
-        x = Dense(64, activation='relu')(x)
-        x = Dropout(0.2)(x)
-        x = Dense(64, activation='relu')(x)
-        x = Dropout(0.2)(x)
-        #x = Flatten()(x)
-        #output_layer = Dense(4 * window_size, activation='softmax')(x)
-        x = Flatten()(x)
-        output_layer = Dense(4 * window_size)(x)
-        output_layer = tf.reshape(output_layer, (-1, window_size, 4))
-        output_layer = tf.nn.softmax(output_layer, axis=-1)
-        output_layer = Flatten()(output_layer)
 
-        transformer_model = Model(inputs=[input_layer], outputs=[output_layer])
-        #transformer_model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
-        transformer_model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy')
-
-        _train_transformer_model(transformer_model, X_train, y_train)
+        transformer_model = _build_and_train_transformer(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
 
         if save_choice:
             transformer_model.save(os.path.join(folder_path, f"{filename}_transformer_model_w{window_size}.h5"))

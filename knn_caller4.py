@@ -47,7 +47,7 @@ def _fit_knn_scaled(X_train, y_train, k):
     return scaler, knn
 
 
-def base_calling_knn(images, num_cycles, num_templates, templates, num_training_templates, window_size, k):
+def base_calling_knn(images, num_cycles, num_templates, templates, num_training_templates, window_size, k, auto_train=False):
     print("base_calling_knn")
     base_colors = {
         'A': (255.0, 0.0, 0.0, 0.0),
@@ -79,7 +79,11 @@ def base_calling_knn(images, num_cycles, num_templates, templates, num_training_
 
     scaler = None
 
-    if training_files:
+    if auto_train:
+        # Train fresh without prompts (used by "run all" mode)
+        X_train, y_train = create_training_set(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
+        scaler, knn = _fit_knn_scaled(X_train, y_train, k)
+    elif training_files:
         print("Available training sets:")
         for i, f in enumerate(training_files):
             print(f"{i + 1}. {f}")

@@ -1,3 +1,4 @@
+
 # Multi-Sim 2 Multi-Caller strand-simulator, strand visualization, image based simulator, images, sequence plots, histogram, select your basecallers.
 # Based on Sequencing by Synthesis (Invented by Jonathan Rothberg) with 454 E-wave technology and Lightning terminators.
 # Jonathan Rothberg, 454 Bio March & April, 13 2023
@@ -556,12 +557,18 @@ if __name__ == "__main__":
         "estimate lag, led, noise, death"
     ]
 
-    # Let the user select methods
+    # Let the user select methods (press Enter or type 'all' to run every real method)
     print("Available methods:")
     for idx, method_name in enumerate(methods, start=1):
         print(f"{idx}. {method_name}")
-    selected_methods_indices = input("Enter the indices of the methods you want to use (separated by space): ")
-    selected_methods_indices = list(map(int, selected_methods_indices.split()))
+    selected_methods_input = input("Enter indices separated by space, or 'all' / Enter to run all real methods: ").strip()
+    if selected_methods_input == "" or selected_methods_input.lower() == "all":
+        # All real methods: 1-5 + 7 (skip placeholder #6)
+        selected_methods_indices = [1, 2, 3, 4, 5, 7]
+        auto_train = True   # skip interactive load/save prompts for ML callers
+    else:
+        selected_methods_indices = list(map(int, selected_methods_input.split()))
+        auto_train = False
     selected_methods = {methods[idx - 1]: False for idx in range(1, len(methods) + 1)}
 
     for idx in selected_methods_indices:
@@ -599,16 +606,16 @@ if __name__ == "__main__":
         knn_accuracy_sum = 0
 
         called_sequences_knn = base_calling_knn(images, num_cycles, number_of_templates, vector_templates,
-                                                num_training_templates, window, k)
+                                                num_training_templates, window, k, auto_train=auto_train)
 
     if selected_methods["transformer"]:
         # window = int(get_input("Transformer Window size: ", 5))
         transformer_accuracy_sum = 0
         called_sequences_transformer = transformer_base_calling(images, num_cycles, number_of_templates,
-                                                                vector_templates, num_training_templates, window)
+                                                                vector_templates, num_training_templates, window, auto_train=auto_train)
     if selected_methods["cnn"]:
             integrated_accuracy_sum = 0
-            called_sequences_integrated = base_calling_cnn(images, num_cycles, number_of_templates, vector_templates, num_training_templates, window, num_passes)
+            called_sequences_integrated = base_calling_cnn(images, num_cycles, number_of_templates, vector_templates, num_training_templates, window, num_passes, auto_train=auto_train)
 
     if selected_methods["new multi place holder do not select"]:
         new_accuracy_sums = [0] * num_passes
