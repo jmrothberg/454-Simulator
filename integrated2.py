@@ -110,7 +110,7 @@ def base_calling_integrated(images, num_cycles, key, num_templates, window_size)
         # Use the estimated lead, lag, and death percentages to call the unknown sequence
         middle_index = window_size // 2
         start_cycle = max(0, len(key) - window_size + middle_index + 1)
-        end_cycle_exclusive = num_cycles - middle_index
+        end_cycle_exclusive = num_cycles - window_size + 1
         if len(key) < window_size or start_cycle >= end_cycle_exclusive:
             called_bases[seq_idx] = key if isinstance(key, str) else ''.join(key)
             continue
@@ -171,7 +171,7 @@ def base_calling_multipass(images, num_cycles, key, num_templates, window_size, 
     called_bases_passes = []
     middle_index = window_size // 2
     start_cycle = max(0, len(key) - window_size + middle_index + 1)
-    end_cycle_exclusive = num_cycles - middle_index
+    end_cycle_exclusive = num_cycles - window_size + 1
 
     if len(key) < window_size or start_cycle >= end_cycle_exclusive:
         return [[key] * num_passes for _ in range(num_templates)]

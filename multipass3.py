@@ -98,8 +98,8 @@ def base_calling_multipass(images, num_cycles, key, num_templates, window_size, 
     # First window whose center sits on the first base after the known key prefix
     start_cycle = len(key) - window_size + middle_index + 1
     start_cycle = max(0, start_cycle)
-    # BUGFIX: upper bound was num_cycles - window_size + 1 (stopped 2 cycles early); last center must be num_cycles-1
-    end_cycle_exclusive = num_cycles - middle_index
+    # cycle is the window START; window covers [cycle, cycle+window_size-1], so cap at num_cycles-window_size
+    end_cycle_exclusive = num_cycles - window_size + 1
 
     if len(key) < window_size or start_cycle >= end_cycle_exclusive:
         return [[key] * num_passes for _ in range(num_templates)]
