@@ -1,4 +1,5 @@
 
+
 # Multi-Sim 2 Multi-Caller strand-simulator, strand visualization, image based simulator, images, sequence plots, histogram, select your basecallers.
 # Based on Sequencing by Synthesis (Invented by Jonathan Rothberg) with 454 E-wave technology and Lightning terminators.
 # Jonathan Rothberg, 454 Bio March & April, 13 2023
@@ -464,8 +465,8 @@ if __name__ == "__main__":
     complement_dict = {'A': 'A', 'C': 'C', 'G': 'G', 'T': 'T', 'N': 'N',
                        '-': '-'}  # don't use complement to make compatible with array methods
 
-    number_of_templates = int(get_input("Number of templates to generate: ", 25))
-    num_training_templates = int(get_input("Number of training templates: ", 20))
+    number_of_templates = int(get_input("Number of templates to generate: ", 200))
+    num_training_templates = int(get_input("Number of training templates: ", 160))
     template_length = int(get_input("Template length: ", 100))
     key = get_input_string(
         "Enter a key sequence", "ACGTTGCA")
@@ -602,34 +603,39 @@ if __name__ == "__main__":
                                                             num_passes)
 
     if selected_methods["kNN"]:
-        # window = int(get_input("kNN Window size: ", 5))
-        knn_accuracy_sum = 0
+        knn_accuracy_sum_train = 0
+        knn_accuracy_sum_test = 0
 
         called_sequences_knn = base_calling_knn(images, num_cycles, number_of_templates, vector_templates,
                                                 num_training_templates, window, k, auto_train=auto_train)
 
     if selected_methods["transformer"]:
-        # window = int(get_input("Transformer Window size: ", 5))
-        transformer_accuracy_sum = 0
+        transformer_accuracy_sum_train = 0
+        transformer_accuracy_sum_test = 0
         called_sequences_transformer = transformer_base_calling(images, num_cycles, number_of_templates,
                                                                 vector_templates, num_training_templates, window, auto_train=auto_train)
     if selected_methods["cnn"]:
-            integrated_accuracy_sum = 0
+            cnn_accuracy_sum_train = 0
+            cnn_accuracy_sum_test = 0
             called_sequences_integrated = base_calling_cnn(images, num_cycles, number_of_templates, vector_templates, num_training_templates, window, num_passes, auto_train=auto_train)
 
     if selected_methods["new multi place holder do not select"]:
         new_accuracy_sums = [0] * num_passes
         #called_sequences_new = base_calling_new (images, num_cycles, number_of_templates, vector_templates, num_training_templates, window, num_passes)
 
+    num_test_templates = number_of_templates - num_training_templates
+
     for i in range(number_of_templates):
         original_seq = vector_templates[i]
         original_seq_bases = letter_templates[i]
-        print(f"Original template {i + 1}            : {original_seq_bases}")
+        is_test = (i >= num_training_templates)
+        split_tag = "TEST" if is_test else "train"
+        print(f"Original template {i + 1} [{split_tag}]       : {original_seq_bases}")
 
         if selected_methods.get("single_image"):
             single_image_called_seq = called_sequences_single_image[i]
-            single_image_accuracy = sum(1 for t, c in zip(original_seq_bases, single_image_called_seq) if t == c) / (
-                        num_cycles - (window // 2)) * 100
+            n_cmp = min(len(original_seq_bases), len(single_image_called_seq))
+            single_image_accuracy = sum(1 for t, c in zip(original_seq_bases, single_image_called_seq) if t == c) / max(n_cmp, 1) * 100
             single_image_accuracy_sum += single_image_accuracy
             print(
                 f"Single Image sequence {i + 1}        : {single_image_called_seq} (Accuracy: {single_image_accuracy:.2f}%)")
@@ -637,69 +643,90 @@ if __name__ == "__main__":
         if selected_methods.get("multipass"):
             multipass_seqs = called_sequences_multipass[i]
             for p, multipass_seq in enumerate(multipass_seqs):
-                multipass_accuracy = sum(1 for t, c in zip(original_seq_bases, multipass_seq) if t == c) / (
-                            num_cycles - (window // 2)) * 100
+                n_cmp = min(len(original_seq_bases), len(multipass_seq))
+                multipass_accuracy = sum(1 for t, c in zip(original_seq_bases, multipass_seq) if t == c) / max(n_cmp, 1) * 100
                 multipass_accuracy_sums[p] += multipass_accuracy
                 print(
                     f"Multi-Pass sequence {i + 1} (Pass {p + 1}) : {multipass_seq} (Accuracy: {multipass_accuracy:.2f}%)")
 
         if selected_methods.get("kNN"):
             knn_seq = called_sequences_knn[i]
-            knn_accuracy = sum(1 for t, c in zip(original_seq_bases, knn_seq) if t == c) / (
-                        num_cycles - (window // 2)) * 100
-            knn_accuracy_sum += knn_accuracy
+            n_cmp = min(len(original_seq_bases), len(knn_seq))
+            knn_accuracy = sum(1 for t, c in zip(original_seq_bases, knn_seq) if t == c) / max(n_cmp, 1) * 100
+            if is_test:
+                knn_accuracy_sum_test += knn_accuracy
+            else:
+                knn_accuracy_sum_train += knn_accuracy
             print(f"kNN sequence {i + 1}                 : {knn_seq} (Accuracy: {knn_accuracy:.2f}%)")
 
         if selected_methods.get("transformer"):
             transformer_seq = called_sequences_transformer[i]
-            transformer_accuracy = sum(1 for t, c in zip(original_seq_bases, transformer_seq) if t == c) / (
-                    num_cycles - (window // 2)) * 100
-            transformer_accuracy_sum += transformer_accuracy
+            n_cmp = min(len(original_seq_bases), len(transformer_seq))
+            transformer_accuracy = sum(1 for t, c in zip(original_seq_bases, transformer_seq) if t == c) / max(n_cmp, 1) * 100
+            if is_test:
+                transformer_accuracy_sum_test += transformer_accuracy
+            else:
+                transformer_accuracy_sum_train += transformer_accuracy
             print(
                 f"Transformer Called sequence {i + 1}  : {transformer_seq} (Accuracy: {transformer_accuracy:.2f}%)")
 
         if selected_methods.get("cnn"):
             integrated_seq = called_sequences_integrated[i]
-            integrated_accuracy = sum(1 for t, c in zip(original_seq_bases, integrated_seq) if t == c) / (
-                        num_cycles - (window // 2)) * 100
-            integrated_accuracy_sum += integrated_accuracy
+            n_cmp = min(len(original_seq_bases), len(integrated_seq))
+            integrated_accuracy = sum(1 for t, c in zip(original_seq_bases, integrated_seq) if t == c) / max(n_cmp, 1) * 100
+            if is_test:
+                cnn_accuracy_sum_test += integrated_accuracy
+            else:
+                cnn_accuracy_sum_train += integrated_accuracy
             print(f"cnn Called sequence {i + 1}          : {integrated_seq} (Accuracy: {integrated_accuracy:.2f}%)")
 
         if selected_methods.get("new multi place holder do not select"):
             hmm_seqs = called_sequences_new [i]
             for p, new_seq in enumerate(hmm_seqs):
-                new_accuracy = sum(1 for t, c in zip(original_seq_bases, new_seq) if t == c) / (num_cycles - (window // 2)) * 100
+                n_cmp = min(len(original_seq_bases), len(new_seq))
+                new_accuracy = sum(1 for t, c in zip(original_seq_bases, new_seq) if t == c) / max(n_cmp, 1) * 100
                 new_accuracy_sums[p] += new_accuracy
                 print(f"cnn Called sequence {i + 1} (Pass {p + 1}) : {new_seq} (Accuracy: {new_accuracy:.2f}%)")
 
     # Calculate the overall accuracy for each method
+    # Physics methods: all templates are unseen (no training data used)
+    # ML methods: report TEST-only accuracy (templates the model never trained on)
+    print(f"\n{'='*70}")
+    print(f"ACCURACY SUMMARY  (trained on {num_training_templates}, tested on {num_test_templates} unseen templates)")
+    print(f"{'='*70}")
+
     if selected_methods.get("single_image"):
         accuracy_single_image = single_image_accuracy_sum / number_of_templates
-        print(f"Overall Accuracy (Single Image Method): {accuracy_single_image:.2f}%")
-
-    if selected_methods.get("kNN"):
-        accuracy_knn = knn_accuracy_sum / number_of_templates
-        print(f"Overall Accuracy (kNN Method): {accuracy_knn:.2f}%")
+        print(f"Single Image (all {number_of_templates} templates, no training): {accuracy_single_image:.2f}%")
 
     if selected_methods.get("multipass"):
         accuracy_multipass = [sum_acc / number_of_templates for sum_acc in multipass_accuracy_sums]
         for p, acc in enumerate(accuracy_multipass):
-            print(f"Overall Accuracy (Multi-Pass Method, Pass {p + 1}): {acc:.2f}%")
+            print(f"Multi-Pass   (all {number_of_templates} templates, no training) Pass {p + 1}: {acc:.2f}%")
             multilastpassaccuracy = acc
 
+    if selected_methods.get("kNN"):
+        acc_train = knn_accuracy_sum_train / max(num_training_templates, 1)
+        acc_test  = knn_accuracy_sum_test  / max(num_test_templates, 1)
+        print(f"kNN          TEST ({num_test_templates} unseen): {acc_test:.2f}%   (train {num_training_templates}: {acc_train:.2f}%)")
+
     if selected_methods.get("transformer"):
-        accuracy_transformer = transformer_accuracy_sum / number_of_templates
-        print(f"Overall Accuracy (Transformer Method): {accuracy_transformer:.2f}%")
+        acc_train = transformer_accuracy_sum_train / max(num_training_templates, 1)
+        acc_test  = transformer_accuracy_sum_test  / max(num_test_templates, 1)
+        print(f"Transformer  TEST ({num_test_templates} unseen): {acc_test:.2f}%   (train {num_training_templates}: {acc_train:.2f}%)")
 
     if selected_methods.get("cnn"):
-        accuracy_integrated = integrated_accuracy_sum / number_of_templates
-        print(f"Overall Accuracy (cnn  Method): {accuracy_integrated:.2f}%")
+        acc_train = cnn_accuracy_sum_train / max(num_training_templates, 1)
+        acc_test  = cnn_accuracy_sum_test  / max(num_test_templates, 1)
+        print(f"CNN          TEST ({num_test_templates} unseen): {acc_test:.2f}%   (train {num_training_templates}: {acc_train:.2f}%)")
 
     if selected_methods.get("new multi place holder do not select"):
         accuracy_new = [sum_acc / number_of_templates for sum_acc in new_accuracy_sums]
         for p, acc in enumerate(accuracy_new):
             print(f"Overall Accuracy (new Method, Pass {p + 1}): {acc:.2f}%")
             newlastpassaccuracy = acc
+
+    print(f"{'='*70}")
 
     #figures = input("Y or any key to display & save images, plots, and histograms (strand sim only) (or hit return to skip): ")
     figures = input(
