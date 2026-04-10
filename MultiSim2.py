@@ -2,6 +2,7 @@
 # Based on Sequencing by Synthesis (Invented by Jonathan Rothberg) with 454 E-wave technology and Lightning terminators.
 # Jonathan Rothberg, 454 Bio March & April, 13 2023
 import os
+import sys
 import math
 import random
 from collections import Counter
@@ -10,20 +11,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
-#Note must import the basecallers
-print("import knn_caller4")
+# Base callers (imports are silent — run MultiSim2.py to drive the pipeline)
 from knn_caller4 import base_calling_knn
-
-print("import transformer8")
 from transformer8 import transformer_base_calling
-
-print("import multipass3")
 from multipass3 import base_calling_multipass
-
-print ("import lagleaddeath")
 from lagleaddeath import estimate_lag_lead_percentages
-
-print ("import cnn_caller")
 from cnn_caller import base_calling_cnn
 
 #place holder an iterative base caller, that returns all the cycle information
@@ -237,24 +229,22 @@ def simulate_sequencing(letter_templates, num_templates_to_process, num_cycles, 
         for i2 in range(num_strands):
             strands.append([' ', ' '])
 
-        image = np.zeros((image_dim, image_dim, 4), dtype=float)
-
         # Initialize the dye counts
         dye_counts = np.zeros((num_cycles, 4))
 
         # Loop over the cycles and simulate sequencing
         for cycle in range(num_cycles):
             simulate_cycle(strands, seq, cycle)
-            # Count the number of each dye in strands
+            # Terminal dye per strand (matches 454Sim13): include dye-before-'dead' for early deaths.
+            terminal_dye = {'yellow': 0, 'green': 1, 'blue': 2, 'red': 3}
             for strand in strands:
-                if 'yellow' in strand:
-                    dye_counts[cycle][0] += 1
-                if 'green' in strand:
-                    dye_counts[cycle][1] += 1
-                if 'blue' in strand:
-                    dye_counts[cycle][2] += 1
-                if 'red' in strand:
-                    dye_counts[cycle][3] += 1
+                if not strand:
+                    continue
+                last = strand[-1]
+                if last in terminal_dye:
+                    dye_counts[cycle][terminal_dye[last]] += 1
+                elif last == 'dead' and len(strand) >= 2 and strand[-2] in terminal_dye:
+                    dye_counts[cycle][terminal_dye[strand[-2]]] += 1
 
         allstrands.append(strands)
         images.append(dye_counts)
@@ -324,22 +314,31 @@ def base_calling_single_image(images, num_cycles, num_templates):
         'G': (0.0, 0.0, 255.0, 0.0),
         'T': (0.0, 0.0, 0.0, 255.0)
     }
+    # L2 unit direction: scale-invariant vs overall brightness; ties → N (not first channel).
+    min_l2_signal = 1e-9
+    min_l2_component = 0.45  # min dominant axis on unit vector for a confident call
+    margin_vs_runner_up = 1.18
+    tie_band = 0.03  # top-two L2 components within this → ambiguous
 
     called_bases = [''] * num_templates
     for seq_idx in range(num_templates):
         for cycle in range(num_cycles):
             row, col = divmod(seq_idx, math.ceil(math.sqrt(num_templates)))
-            spot_color = images[cycle][row][col]
-            min_error = float('inf')
-            best_base = None
-
-            for base, color in base_colors.items():
-                error = np.sum((np.array(color) - np.array(spot_color)) ** 2)
-                if error < min_error:
-                    min_error = error
-                    best_base = base
-
-            called_bases[seq_idx] += best_base
+            spot = np.asarray(images[cycle][row][col], dtype=np.float64).ravel()[:4]
+            l2 = float(np.linalg.norm(spot))
+            if l2 < min_l2_signal:
+                called_bases[seq_idx] += 'N'
+                continue
+            u = spot / l2
+            order = np.sort(u)
+            low, high = float(order[-2]), float(order[-1])
+            max_index = int(np.argmax(u))
+            if high - low < tie_band:
+                called_bases[seq_idx] += 'N'
+            elif high < min_l2_component or (low > 1e-12 and high < margin_vs_runner_up * low):
+                called_bases[seq_idx] += 'N'
+            else:
+                called_bases[seq_idx] += ['A', 'C', 'G', 'T'][max_index]
 
         print(f"Single Image {seq_idx + 1}: {called_bases[seq_idx]}")
 
@@ -532,6 +531,7 @@ if __name__ == "__main__":
         reshaped_images = images  # No need to reshape for generate_images_with_noise
     else:
         print("Invalid choice, exiting.")
+        sys.exit(1)
 
     called_sequences_single_image = []
     called_sequences_integrated = []
@@ -574,11 +574,12 @@ if __name__ == "__main__":
         print(f"Estimated Lead Percentage  : {best_lead * 100:.2f}%")
         print(f"Estimated Death Percentage : {best_death * 100:.2f}%")
 
-        print(f"Estimated Lag Noise Percentage : {noise_lag * 100:.2f}%")
-        print(f"Estimated Lead Noise Percentage : {noise_lead * 100:.2f}%")
-        print(f"Estimated Death Noise Percentage : {noise_death * 100:.2f}%")
+        # lagleaddeath: dimensionless sensitivity (model shift / data residual) per pathway, not a true %
+        print(f"Lag-path sensitivity index   : {noise_lag:.4f}")
+        print(f"Lead-path sensitivity index  : {noise_lead:.4f}")
+        print(f"Death-path sensitivity index : {noise_death:.4f}")
 
-        print("Estimated min_error        :", min_error)
+        print("Estimated min_error (SSE)    :", min_error)
 
     # Call the selected methods
     if selected_methods["single_image"]:
@@ -770,7 +771,7 @@ if __name__ == "__main__":
                 f.write("Called_sequences_transformer: {}\n".format(called_sequences_transformer))
                 f.write("Overall Accuracy (Transformer Method)   : {:.2f}%\n".format(accuracy_transformer))
 
-            if selected_methods.get("new"):
+            if selected_methods.get("new multi place holder do not select"):
                 f.write("called_sequences_new: {}\n".format(called_sequences_new))
                 f.write("Overall Accuracy (new multi method last pass ): {:.2f}%\n".format(newlastpassaccuracy))
 

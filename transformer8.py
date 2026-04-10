@@ -10,10 +10,9 @@ from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, MultiHeadAtt
 from tensorflow.keras.models import Model
 from tensorflow.keras.models import load_model
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
 
-# Get the current working directory
 cwd = os.getcwd()
-print ("current working directory")
 
 # Define the folder name
 folder_name = 'Sim Models'
@@ -25,39 +24,56 @@ folder_path = os.path.join(cwd, folder_name)
 if not os.path.exists(folder_path):
     os.makedirs(folder_path)
     print ("Made New Folder ", folder_path)
+_BASE_ORDER = ("A", "C", "G", "T")
+
 def onehot_to_base(predicted_colors):
-    base_colors = {
-        'A': (1.0, 0.0, 0.0, 0.0),
-        'C': (0.0, 1.0, 0.0, 0.0),
-        'G': (0.0, 0.0, 1.0, 0.0),
-        'T': (0.0, 0.0, 0.0, 1.0)
-    }
-
+    """Argmax per 4-vector (matches softmax output; avoids dot vs corner tie quirks)."""
     predicted_base_seq = []
-    for i in range(0, len(predicted_colors), 4):
-        color_values = predicted_colors[i:i+4]
-        predicted_base = max(base_colors, key=lambda k: np.dot(color_values, base_colors[k]))
-        predicted_base_seq.append(predicted_base)
-
+    flat = np.asarray(predicted_colors, dtype=np.float64).ravel()
+    for i in range(0, len(flat), 4):
+        block = flat[i : i + 4]
+        predicted_base_seq.append(_BASE_ORDER[int(np.argmax(block))])
     return predicted_base_seq
+
+
+def _train_transformer_model(model, X_train, y_train):
+    stop = EarlyStopping(
+        monitor="val_loss", patience=6, restore_best_weights=True, verbose=0
+    )
+    model.fit(
+        X_train,
+        y_train,
+        batch_size=32,
+        epochs=80,
+        validation_split=0.1,
+        callbacks=[stop],
+        verbose=1,
+    )
+
+def _base_from_vector(tpl, base_keys):
+    arr = np.asarray(tpl, dtype=np.float64).ravel()[:4]
+    return base_keys[int(np.argmax(arr))]
 
 def create_training_set(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors):
     print ("create_training_set")
     X_train, y_train = [], []
+    base_keys = list(base_colors.keys())
     for training_seq_idx in range(num_training_templates):
 
         row, col = divmod(training_seq_idx, math.ceil(math.sqrt(num_templates)))
         training_seq = templates[training_seq_idx]
 
-        base_combinations = ["".join([list(base_colors.keys())[tpl.index(max(tpl))] for tpl in training_seq][i:i + window_size]) for i in range(len("".join([list(base_colors.keys())[tpl.index(max(tpl))] for tpl in training_seq])) - window_size + 1)]
+        letters = "".join(_base_from_vector(tpl, base_keys) for tpl in training_seq)
+        base_combinations = [letters[i:i + window_size] for i in range(len(letters) - window_size + 1)]
 
         for i, base_combination in enumerate(base_combinations):
             cycle_offset = i
-            spot_colors = [images[min(cycle_offset + j, num_cycles - 1)][row][col] for j in range(window_size)]
+            spot_colors = [np.asarray(images[min(cycle_offset + j, num_cycles - 1)][row][col], dtype=np.float64).ravel()[:4] for j in range(window_size)]
 
             expected_colors = [np.array(base_colors[base]) for base in base_combination]
 
-            X_train.append(np.array(spot_colors))
+            # BUGFIX: training inputs must match inference (/255) or loss fights wrong scale.
+            X_train.append(np.array(spot_colors, dtype=np.float64) / 255.0)
             y_train.append(np.array(expected_colors))
 
     X_train = np.array(X_train)
@@ -100,7 +116,8 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
             # Create a new model and train it
             X_train, y_train = create_training_set(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
             input_layer = Input(shape=(window_size, 4))
-            x = MultiHeadAttention(num_heads=8, key_dim=4)(input_layer, input_layer)
+            # d_model=4 requires num_heads * key_dim == 4 (e.g. 2 heads × 2)
+            x = MultiHeadAttention(num_heads=2, key_dim=2)(input_layer, input_layer)
             x = LayerNormalization(epsilon=1e-6)(Add()([input_layer, x]))
             x = Dense(64, activation='relu')(x)
             x = Dropout(0.2)(x)
@@ -118,7 +135,7 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
             #transformer_model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
             transformer_model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy')
 
-            transformer_model.fit(X_train, y_train, batch_size=32, epochs=10)
+            _train_transformer_model(transformer_model, X_train, y_train)
 
             if save_choice:
                 transformer_model.save(os.path.join(folder_path, f"{filename}_transformer_model_w{window_size}.h5"))
@@ -138,7 +155,7 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
         # Create a new model and train it
         X_train, y_train = create_training_set(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
         input_layer = Input(shape=(window_size, 4))
-        x = MultiHeadAttention(num_heads=8, key_dim=4)(input_layer, input_layer)
+        x = MultiHeadAttention(num_heads=2, key_dim=2)(input_layer, input_layer)
         x = LayerNormalization(epsilon=1e-6)(Add()([input_layer, x]))
         x = Dense(64, activation='relu')(x)
         x = Dropout(0.2)(x)
@@ -156,7 +173,7 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
         #transformer_model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
         transformer_model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy')
 
-        transformer_model.fit(X_train, y_train, batch_size=32, epochs=10)
+        _train_transformer_model(transformer_model, X_train, y_train)
 
         if save_choice:
             transformer_model.save(os.path.join(folder_path, f"{filename}_transformer_model_w{window_size}.h5"))
@@ -168,10 +185,10 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
         assembled_seq = []
 
         for cycle in range(-middle_index, num_cycles - window_size + middle_index + 1):
-            spot_colors = [images[cycle + w][row][col] if 0 <= cycle + w < num_cycles else np.zeros(4) for w in range(window_size)]
+            spot_colors = [np.asarray(images[cycle + w][row][col], dtype=np.float64).ravel()[:4] if 0 <= cycle + w < num_cycles else np.zeros(4) for w in range(window_size)]
             spot_colors = np.array(spot_colors) / 255.0
             spot_colors = spot_colors.reshape(1, window_size, 4)
-            predicted_colors = transformer_model.predict(spot_colors)[0]
+            predicted_colors = transformer_model.predict(spot_colors, verbose=0)[0]
 
             predicted_base_seq = onehot_to_base(predicted_colors)
             assembled_seq.append(predicted_base_seq[middle_index])

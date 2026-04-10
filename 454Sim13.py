@@ -214,19 +214,24 @@ def simulate_cycle(strands, template, cycle):
 # Initialize the dye counts
 dye_counts = np.zeros((cycle_count, 4))
 
+# Map terminal dye (blocked strand end) to channel index A,C,G,T — must match plot stacking order below.
+TERMINAL_DYE_TO_CHANNEL = {'yellow': 0, 'green': 1, 'blue': 2, 'red': 3}
+
 # Loop over the cycles and simulate sequencing
 for cycle in range(cycle_count):
     simulate_cycle(strands, template, cycle)
-    # Count the number of each dye in strands
+    # Count blocked terminators: live strands use the terminal dye; strands that die right after
+    # incorporation still contribute the dye before 'dead' (do not drop early-death signal).
     for strand in strands:
-        if 'yellow' in strand:
-            dye_counts[cycle][0] += 1
-        if 'green' in strand:
-            dye_counts[cycle][1] += 1
-        if 'blue' in strand:
-            dye_counts[cycle][2] += 1
-        if 'red' in strand:
-            dye_counts[cycle][3] += 1
+        if not strand:
+            continue
+        last = strand[-1]
+        if last in TERMINAL_DYE_TO_CHANNEL:
+            dye_counts[cycle][TERMINAL_DYE_TO_CHANNEL[last]] += 1
+        elif last == 'dead' and len(strand) >= 2:
+            prev = strand[-2]
+            if prev in TERMINAL_DYE_TO_CHANNEL:
+                dye_counts[cycle][TERMINAL_DYE_TO_CHANNEL[prev]] += 1
 
 print (dye_counts)
 
@@ -237,17 +242,33 @@ complement_string = ''.join(complement_template)
 
 print ("Template: \n", template)
 
-# Base calling code
-threshold = 0.2 * np.amax(dye_counts, axis=1)
+# Base calling: multinomial-style decision per cycle — one base per sequencing cycle (blocked terminator
+# per addition); dye_counts are strands ending the cycle with each terminal dye, not flowgram intensity.
+MIN_TERMINAL_DYE_FRACTION = 0.005  # ignore cycles with almost no blocked strands (noise floor)
+MARGIN_VS_RUNNER_UP = 1.2  # winner must exceed second place by this factor when second place > 0
+MIN_WINNER_SHARE = 0.5  # when second place is ~0, winner must hold at least this fraction of total signal
+# Laplace smoothing on counts for multinomial-style decisions (stabilizes low strand totals)
+CALL_SMOOTHING = 0.25
+
 base_calls = []
 for i in range(cycle_count):
-    max_count = np.amax(dye_counts[i])
-    max_index = np.argmax(dye_counts[i])
-    second_max_count = np.partition(dye_counts[i], -2)[-2]
-    if max_count >= (1 + 0.2) * second_max_count:
+    counts = dye_counts[i].astype(np.float64)
+    total_raw = float(np.sum(counts))
+    if total_raw < max(1.0, MIN_TERMINAL_DYE_FRACTION * num_strands):
+        base_calls.append('N')
+        continue
+    s = counts + CALL_SMOOTHING
+    total = float(np.sum(s))
+    max_index = int(np.argmax(s))
+    max_count = float(s[max_index])
+    second_max_count = float(np.partition(s, -2)[-2])
+    winner_share = max_count / total
+    if second_max_count <= CALL_SMOOTHING * 1.0001:
+        base_call = ['A', 'C', 'G', 'T'][max_index] if winner_share >= MIN_WINNER_SHARE else 'N'
+    elif max_count >= MARGIN_VS_RUNNER_UP * second_max_count and winner_share >= 0.25:
         base_call = ['A', 'C', 'G', 'T'][max_index]
     else:
-        base_call = "N"
+        base_call = 'N'
     base_calls.append(base_call)
 base_call_string = "".join(base_calls)
 

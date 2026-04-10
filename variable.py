@@ -3,6 +3,12 @@
 # We slide the window along the images, keeping the center base to try to determine what the original template seqeunce was. We can't cheat, the gound truth is only to
 # know how long the sequene is, and later to see how accurate our base calling is.
 
+import math
+from itertools import product
+
+import numpy as np
+
+
 def base_calling_uncertain_lag_lead(images, num_cycles, lag_percent, lead_percent, death_percent, num_templates, window_size):
     print ("base_calling_uncertain_lag_lead")
     base_colors = {
@@ -27,7 +33,7 @@ def base_calling_uncertain_lag_lead(images, num_cycles, lag_percent, lead_percen
 
                 for w in range(window_size):
                     current_cycle = cycle + w
-                    spot_color = images[current_cycle][row][col]
+                    spot_color = np.asarray(images[current_cycle][row][col], dtype=np.float64).ravel()[:4]
                     base_color = np.array(base_colors[list(base_colors.keys())[base_combination[w]]])
 
                     if w > 0:
@@ -40,8 +46,12 @@ def base_calling_uncertain_lag_lead(images, num_cycles, lag_percent, lead_percen
                     else:
                         leading_base_color = base_color
 
-                    reduction_factor = 1 - np.sum(lagging_base_color * lag_percent) / base_color[np.argmax(base_color)]
-                    reduction_factor -= np.sum(leading_base_color * lead_percent) / base_color[np.argmax(base_color)]
+                    # BUGFIX: avoid div by zero on empty or zero peak channel
+                    peak = float(base_color[np.argmax(base_color)])
+                    if peak < 1e-12:
+                        peak = 1e-12
+                    reduction_factor = 1 - np.sum(lagging_base_color * lag_percent) / peak
+                    reduction_factor -= np.sum(leading_base_color * lead_percent) / peak
 
                     # Calculate the alive factor based on the death_percentage for the current cycle
                     alive_factor = (1 - death_percent) ** current_cycle
