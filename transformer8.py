@@ -6,7 +6,7 @@ import re
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, MultiHeadAttention, LayerNormalization, Add
+from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, MultiHeadAttention, LayerNormalization, Add, Reshape, Softmax
 from tensorflow.keras.models import Model
 from tensorflow.keras.models import load_model
 from tensorflow.keras.optimizers import Adam
@@ -103,8 +103,8 @@ def _build_and_train_transformer(images, num_templates, templates, num_training_
     x = Dropout(0.2)(x)
     x = Flatten()(x)
     output_layer = Dense(4 * window_size)(x)
-    output_layer = tf.reshape(output_layer, (-1, window_size, 4))
-    output_layer = tf.nn.softmax(output_layer, axis=-1)
+    output_layer = Reshape((window_size, 4))(output_layer)
+    output_layer = Softmax(axis=-1)(output_layer)
     output_layer = Flatten()(output_layer)
 
     model = Model(inputs=[input_layer], outputs=[output_layer])
@@ -163,23 +163,37 @@ def transformer_base_calling(images, num_cycles, num_templates, templates, num_t
 
         if save_choice:
             transformer_model.save(os.path.join(folder_path, f"{filename}_transformer_model_w{window_size}.h5"))
-    # reset window size if saved model not the user input
+    # Batched inference: collect ALL windows across ALL templates, predict once.
     called_bases = [''] * num_templates
     middle_index = window_size // 2
+    image_dim = math.ceil(math.sqrt(num_templates))
+    cycle_start = -middle_index
+    cycle_end = num_cycles - window_size + middle_index + 1
+    n_windows = cycle_end - cycle_start
+
+    all_windows = []
     for seq_idx in range(num_templates):
-        row, col = divmod(seq_idx, math.ceil(math.sqrt(num_templates)))
-        assembled_seq = []
+        row, col = divmod(seq_idx, image_dim)
+        for cycle in range(cycle_start, cycle_end):
+            window = np.zeros((window_size, 4), dtype=np.float64)
+            for w in range(window_size):
+                c = cycle + w
+                if 0 <= c < num_cycles:
+                    window[w] = np.asarray(images[c][row][col], dtype=np.float64).ravel()[:4]
+            all_windows.append(window)
 
-        for cycle in range(-middle_index, num_cycles - window_size + middle_index + 1):
-            spot_colors = [np.asarray(images[cycle + w][row][col], dtype=np.float64).ravel()[:4] if 0 <= cycle + w < num_cycles else np.zeros(4) for w in range(window_size)]
-            spot_colors = np.array(spot_colors) / 255.0
-            spot_colors = spot_colors.reshape(1, window_size, 4)
-            predicted_colors = transformer_model.predict(spot_colors, verbose=0)[0]
+    all_X = np.array(all_windows, dtype=np.float64) / 255.0
+    all_preds = transformer_model.predict(all_X, batch_size=256, verbose=0)
 
-            predicted_base_seq = onehot_to_base(predicted_colors)
-            assembled_seq.append(predicted_base_seq[middle_index])
-
-        called_bases[seq_idx] = ''.join(assembled_seq)
+    idx = 0
+    for seq_idx in range(num_templates):
+        chars = []
+        for _ in range(n_windows):
+            pred = all_preds[idx]
+            flat = np.asarray(pred, dtype=np.float64).ravel()
+            chars.append(_BASE_ORDER[int(np.argmax(flat[middle_index * 4 : middle_index * 4 + 4]))])
+            idx += 1
+        called_bases[seq_idx] = ''.join(chars)
         print("Template         ", seq_idx, ":", ''.join([base for v in templates[seq_idx] for base, color in base_colors.items() if np.array_equal([val / 255.0 for val in v], color)]))
         print("Transformer Called bases ", seq_idx, ":", called_bases[seq_idx])
 

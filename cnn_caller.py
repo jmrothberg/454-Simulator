@@ -156,22 +156,38 @@ def base_calling_cnn(images, num_cycles, num_templates, templates, num_training_
                     (label_encoder, onehot_encoder, window_size, iterations, _INPUT_SCALE_KEY), f
                 )
 
+    # Batched inference: collect ALL windows across ALL templates, predict once.
     called_bases = [''] * num_templates
     middle_index = window_size // 2
+    image_dim = math.ceil(math.sqrt(num_templates))
+    cycle_start = -middle_index
+    cycle_end = num_cycles - window_size + middle_index + 1
+    n_windows = cycle_end - cycle_start
+    scale = max(float(cnn_input_scale), 1e-12)
+
+    all_windows = []
     for seq_idx in range(num_templates):
-        row, col = divmod(seq_idx, math.ceil(math.sqrt(num_templates)))
+        row, col = divmod(seq_idx, image_dim)
+        for cycle in range(cycle_start, cycle_end):
+            window = np.zeros((window_size, 4), dtype=np.float32)
+            for w in range(window_size):
+                c = cycle + w
+                if 0 <= c < num_cycles:
+                    window[w] = np.asarray(images[c][row][col], dtype=np.float32).ravel()[:4]
+            all_windows.append(window)
 
-        assembled_seq = []
-        for cycle in range(-middle_index, num_cycles - window_size + middle_index + 1):
-            spot_colors = [np.asarray(images[cycle + w][row][col], dtype=np.float32).ravel()[:4] if 0 <= cycle + w < num_cycles else np.zeros(4, dtype=np.float32) for w in
-                           range(window_size)]
-            spot_colors_flat = np.array(spot_colors, dtype=np.float32).reshape((1, window_size, 4))
-            spot_colors_flat = spot_colors_flat / max(float(cnn_input_scale), 1e-12)
+    all_X = np.array(all_windows, dtype=np.float32) / scale
+    all_preds = cnn.predict(all_X, batch_size=256, verbose=0)
+    all_pred_indices = np.argmax(all_preds, axis=1)
+    all_decoded = label_encoder.inverse_transform(all_pred_indices)
 
-            predicted_base_combination_idx = np.argmax(cnn.predict(spot_colors_flat, verbose=0), axis=1)[0]
-            assembled_seq.append(label_encoder.inverse_transform([predicted_base_combination_idx])[0][middle_index])
-
-        called_bases[seq_idx] = ''.join(assembled_seq)
+    idx = 0
+    for seq_idx in range(num_templates):
+        chars = []
+        for _ in range(n_windows):
+            chars.append(all_decoded[idx][middle_index])
+            idx += 1
+        called_bases[seq_idx] = ''.join(chars)
         print("Template         ", seq_idx, ":", ''.join(
             [base for v in templates[seq_idx] for base, color in base_colors.items() if np.array_equal(v, color)]))
         print("cnn Called Bases ", seq_idx, ":", called_bases[seq_idx])

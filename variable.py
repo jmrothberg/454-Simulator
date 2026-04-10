@@ -8,73 +8,64 @@ from itertools import product
 
 import numpy as np
 
+# One-hot base vectors (A/C/G/T × 255) — allocated once at import.
+_BC = np.array([[255.0, 0.0, 0.0, 0.0],
+                [0.0, 255.0, 0.0, 0.0],
+                [0.0, 0.0, 255.0, 0.0],
+                [0.0, 0.0, 0.0, 255.0]], dtype=np.float64)
+_BASE_KEYS = ('A', 'C', 'G', 'T')
+
+_combo_cache = {}
+
+def _get_combos(ws):
+    if ws not in _combo_cache:
+        idx = np.array(list(product(range(4), repeat=ws)), dtype=np.int32)
+        colors = _BC[idx]
+        lag = np.empty_like(colors)
+        lag[:, 0]  = colors[:, 0]
+        lag[:, 1:] = colors[:, :-1]
+        lead = np.empty_like(colors)
+        lead[:, -1]  = colors[:, -1]
+        lead[:, :-1] = colors[:, 1:]
+        _combo_cache[ws] = (idx, colors, lag, lead)
+    return _combo_cache[ws]
+
 
 def base_calling_uncertain_lag_lead(images, num_cycles, lag_percent, lead_percent, death_percent, num_templates, window_size):
     print ("base_calling_uncertain_lag_lead")
-    base_colors = {
-        'A': (255.0, 0.0, 0.0, 0.0),
-        'C': (0.0, 255.0, 0.0, 0.0),
-        'G': (0.0, 0.0, 255.0, 0.0),
-        'T': (0.0, 0.0, 0.0, 255.0)
-    }
 
     middle_index = window_size // 2
     called_bases = [''] * num_templates
+    all_combos, combo_colors, lag_colors, lead_colors = _get_combos(window_size)
+    image_dim = math.ceil(math.sqrt(num_templates))
+
+    reduction = 1.0 - lag_percent - lead_percent
+    death_base = 1.0 - death_percent
+
     for seq_idx in range(num_templates):
-        row, col = divmod(seq_idx, math.ceil(math.sqrt(num_templates)))
+        row, col = divmod(seq_idx, image_dim)
+
+        spot_array = np.array([np.asarray(images[c][row][col], dtype=np.float64).ravel()[:4]
+                               for c in range(num_cycles)])
 
         assembled_seq = []
-        for cycle in range(num_cycles - window_size + 1): # Change the loop range
-            min_error = float('inf')
-            best_window_seq = ""
+        for cycle in range(num_cycles - window_size + 1):
+            spots = spot_array[cycle:cycle + window_size]
+            alive = death_base ** np.arange(cycle, cycle + window_size, dtype=np.float64)
 
-            for base_combination in product(range(4), repeat=window_size):
-                error = 0
+            expected = combo_colors * (alive[None, :, None] * reduction) + \
+                       lag_colors * lag_percent + lead_colors * lead_percent
+            diff = expected - spots[None, :, :]
+            errors = np.einsum('ijk,ijk->i', diff, diff)
 
-                for w in range(window_size):
-                    current_cycle = cycle + w
-                    spot_color = np.asarray(images[current_cycle][row][col], dtype=np.float64).ravel()[:4]
-                    base_color = np.array(base_colors[list(base_colors.keys())[base_combination[w]]])
+            best_idx = int(np.argmin(errors))
+            best_combo = all_combos[best_idx]
 
-                    if w > 0:
-                        lagging_base_color = np.array(base_colors[list(base_colors.keys())[base_combination[w - 1]]])
-                    else:
-                        lagging_base_color = base_color
-
-                    if w < window_size - 1:
-                        leading_base_color = np.array(base_colors[list(base_colors.keys())[base_combination[w + 1]]])
-                    else:
-                        leading_base_color = base_color
-
-                    # BUGFIX: avoid div by zero on empty or zero peak channel
-                    peak = float(base_color[np.argmax(base_color)])
-                    if peak < 1e-12:
-                        peak = 1e-12
-                    reduction_factor = 1 - np.sum(lagging_base_color * lag_percent) / peak
-                    reduction_factor -= np.sum(leading_base_color * lead_percent) / peak
-
-                    # Calculate the alive factor based on the death_percentage for the current cycle
-                    alive_factor = (1 - death_percent) ** current_cycle
-
-                    # Multiply the base_color by the alive_factor
-                    base_color *= alive_factor
-
-                    expected_color = base_color * reduction_factor
-                    expected_color += lagging_base_color * lag_percent
-                    expected_color += leading_base_color * lead_percent
-
-                    error += np.sum((expected_color - spot_color) ** 2)
-
-                if error < min_error:
-                    min_error = error
-                    best_window_seq = base_combination
-
-            best_window_seq_letters = ''.join([list(base_colors.keys())[base_idx] for base_idx in best_window_seq])
             #print("For cycle, min_error, best_window_seq:", cycle, min_error, best_window_seq_letters)
             if cycle == 0:
-                assembled_seq.extend([list(base_colors.keys())[base_idx] for base_idx in best_window_seq[:middle_index + 1]])
+                assembled_seq.extend([_BASE_KEYS[base_idx] for base_idx in best_combo[:middle_index + 1]])
             else:
-                assembled_seq.append(list(base_colors.keys())[best_window_seq[middle_index]])
+                assembled_seq.append(_BASE_KEYS[best_combo[middle_index]])
 
         called_bases[seq_idx] = ''.join(assembled_seq)
 

@@ -123,24 +123,32 @@ def base_calling_knn(images, num_cycles, num_templates, templates, num_training_
             with open(os.path.join(folder_path, f"{filename}_knn_classifier_w{window_size}_k{k}.pkl"), 'wb') as f:
                 pickle.dump({"version": 2, "scaler": scaler, "knn": knn}, f)
 
+    # Batched inference: collect all windows per template, predict in one call.
     called_bases = [''] * num_templates
     middle_index = window_size // 2
+    image_dim = math.ceil(math.sqrt(num_templates))
+    cycle_start = -middle_index
+    cycle_end = num_cycles - window_size + middle_index + 1
+    n_windows = cycle_end - cycle_start
+
     for seq_idx in range(num_templates):
-        row, col = divmod(seq_idx, math.ceil(math.sqrt(num_templates)))
+        row, col = divmod(seq_idx, image_dim)
 
-        assembled_seq = []
-        for cycle in range(-middle_index, num_cycles - window_size + middle_index + 1):
-            spot_colors = [np.asarray(images[cycle + w][row][col], dtype=np.float64).ravel()[:4] if 0 <= cycle + w < num_cycles else np.zeros(4) for w in range(window_size)]
+        all_windows = []
+        for cycle in range(cycle_start, cycle_end):
+            window = np.zeros((window_size, 4), dtype=np.float64)
+            for w in range(window_size):
+                c = cycle + w
+                if 0 <= c < num_cycles:
+                    window[w] = np.asarray(images[c][row][col], dtype=np.float64).ravel()[:4]
+            all_windows.append(window.ravel())
 
-            spot_colors_flat = np.array(spot_colors, dtype=np.float64).reshape(1, -1)
-            if scaler is not None:
-                spot_colors_flat = scaler.transform(spot_colors_flat)
+        X = np.array(all_windows, dtype=np.float64)
+        if scaler is not None:
+            X = scaler.transform(X)
+        preds = knn.predict(X)
 
-            predicted_base_combination = knn.predict(spot_colors_flat)[0]
-
-            assembled_seq.append(predicted_base_combination[middle_index])
-
-        called_bases[seq_idx] = ''.join(assembled_seq)
+        called_bases[seq_idx] = ''.join(p[middle_index] for p in preds)
         print("Template         ", seq_idx, ":", ''.join([base for v in templates[seq_idx] for base, color in base_colors.items() if np.array_equal(v, color)]))
         print("kNN Called Bases ", seq_idx, ":", called_bases[seq_idx])
 

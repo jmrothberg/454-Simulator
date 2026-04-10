@@ -2,7 +2,30 @@
 import numpy as np
 from itertools import product
 import math
-from joblib import Parallel, delayed
+
+# One-hot base vectors (A/C/G/T × 255) — allocated once at import.
+_BC = np.array([[255.0, 0.0, 0.0, 0.0],
+                [0.0, 255.0, 0.0, 0.0],
+                [0.0, 0.0, 255.0, 0.0],
+                [0.0, 0.0, 0.0, 255.0]], dtype=np.float64)
+_BASE_KEYS = ('A', 'C', 'G', 'T')
+
+_combo_cache = {}
+
+def _get_combos(ws):
+    """Return (indices, base_colors, lag_colors, lead_colors) arrays for all 4^ws combinations."""
+    if ws not in _combo_cache:
+        idx = np.array(list(product(range(4), repeat=ws)), dtype=np.int32)
+        colors = _BC[idx]
+        lag = np.empty_like(colors)
+        lag[:, 0]  = colors[:, 0]
+        lag[:, 1:] = colors[:, :-1]
+        lead = np.empty_like(colors)
+        lead[:, -1]  = colors[:, -1]
+        lead[:, :-1] = colors[:, 1:]
+        _combo_cache[ws] = (idx, colors, lag, lead)
+    return _combo_cache[ws]
+
 
 def estimate_death_percent(images, key, row, col):
     base_colors = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
@@ -27,147 +50,94 @@ def estimate_death_percent(images, key, row, col):
         return 0.0
     return death_percent_sum / count
 
-def estimate_lead_lag_death_worker(images, key, row, col, window_size, lead_lag_combination):
-    base_colors = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
-
-    death_percent = estimate_death_percent(images, key, row, col)
-
-    lead_percent, lag_percent = lead_lag_combination
-    total_error = 0
-
-    for cycle in range(len(key) - window_size + 1):
-        current_cycle = cycle
-        spot_color = np.asarray(images[current_cycle][row][col], dtype=np.float64).ravel()[:4]
-        base_color = np.array(spot_color)
-
-        if cycle > 0:
-            lagging_base_color = np.asarray(images[current_cycle - 1][row][col])[:4]
-        else:
-            lagging_base_color = base_color
-
-        if cycle < len(key) - 1:
-            leading_base_color = np.asarray(images[current_cycle + 1][row][col])[:4]
-        else:
-            leading_base_color = base_color
-
-        den = float(np.sum(base_color))
-        if den < 1e-12:
-            den = 1e-12
-        reduction_factor = 1 - (lagging_base_color * lag_percent) / den
-        reduction_factor -= (leading_base_color * lead_percent) / den
-
-        base_color *= (1 - death_percent)
-
-        expected_color = base_color * reduction_factor
-        expected_color += lagging_base_color * lag_percent
-        expected_color += leading_base_color * lead_percent
-
-        error = np.sum((expected_color - spot_color) ** 2)
-        total_error += error
-
-    denom = len(key) - window_size + 1
-    if denom <= 0:
-        return lead_lag_combination, float('inf')
-    avg_error = total_error / denom
-
-    return lead_lag_combination, avg_error
 
 def estimate_lead_lag_death(images, key, row, col, window_size):
-
-    combinations = list(product(np.linspace(0, 0.2, 21), repeat=2))
-    results = Parallel(n_jobs=-1)(delayed(estimate_lead_lag_death_worker)(images, key, row, col, window_size, comb) for comb in combinations)
-
-    finite = [r for r in results if r[1] < float('inf')]
-    best_lead_lag_combination, min_error = min(finite if finite else results, key=lambda x: x[1])
-
+    """Grid-search for best (lead, lag) — runs in-process (faster than joblib for this tiny workload)."""
     death_percent = estimate_death_percent(images, key, row, col)
+    key_len = len(key)
+    n_windows = key_len - window_size + 1
+    if n_windows <= 0:
+        return {'lead_percent': 0.0, 'lag_percent': 0.0, 'death_percent': death_percent}
 
-    return {
-    'lead_percent': best_lead_lag_combination[0],
-    'lag_percent': best_lead_lag_combination[1],
-    'death_percent': death_percent,
-    }
+    spots = np.array([np.asarray(images[c][row][col], dtype=np.float64).ravel()[:4] for c in range(key_len)])
+    alive_mult = 1.0 - death_percent
+
+    grid = np.linspace(0, 0.2, 21)
+    best_error = float('inf')
+    best_lead = 0.0
+    best_lag = 0.0
+
+    for lead_pct in grid:
+        for lag_pct in grid:
+            total_error = 0.0
+            for c in range(n_windows):
+                spot = spots[c]
+                base = spot.copy()
+                lag_c = spots[c - 1] if c > 0 else spot
+                lead_c = spots[c + 1] if c < key_len - 1 else spot
+
+                den = max(float(np.sum(base)), 1e-12)
+                reduction = 1.0 - (lag_c * lag_pct) / den - (lead_c * lead_pct) / den
+                base *= alive_mult
+                expected = base * reduction + lag_c * lag_pct + lead_c * lead_pct
+                diff = expected - spot
+                total_error += float(np.dot(diff, diff))
+
+            if total_error < best_error:
+                best_error = total_error
+                best_lead = lead_pct
+                best_lag = lag_pct
+
+    return {'lead_percent': best_lead, 'lag_percent': best_lag, 'death_percent': death_percent}
+
 
 def base_calling_integrated(images, num_cycles, key, num_templates, window_size):
     print ("Running base_calling_integrated")
-    base_colors = {
-        'A': (255.0, 0.0, 0.0, 0.0),
-        'C': (0.0, 255.0, 0.0, 0.0),
-        'G': (0.0, 0.0, 255.0, 0.0),
-        'T': (0.0, 0.0, 0.0, 255.0)
-    }
 
     called_bases = [''] * num_templates
+    all_combos, combo_colors, lag_colors, lead_colors = _get_combos(window_size)
+    image_dim = math.ceil(math.sqrt(num_templates))
+    middle_index = window_size // 2
+    start_cycle = max(0, len(key) - window_size + middle_index + 1)
+    end_cycle_exclusive = num_cycles - window_size + 1
 
     for seq_idx in range(num_templates):
-        #row, col = divmod(seq_idx, int(np.sqrt(num_templates)))
-        row, col = divmod(seq_idx, math.ceil(math.sqrt(num_templates)))
+        row, col = divmod(seq_idx, image_dim)
 
         # Handle the known key first
         assembled_seq = list(key)
         lead_lag_death = estimate_lead_lag_death(images, key, row, col, window_size)
 
-        # Use the estimated lead, lag, and death percentages to call the unknown sequence
-        middle_index = window_size // 2
-        start_cycle = max(0, len(key) - window_size + middle_index + 1)
-        end_cycle_exclusive = num_cycles - window_size + 1
         if len(key) < window_size or start_cycle >= end_cycle_exclusive:
             called_bases[seq_idx] = key if isinstance(key, str) else ''.join(key)
             continue
+
+        lag_pct = lead_lag_death['lag_percent']
+        lead_pct = lead_lag_death['lead_percent']
+        death_pct = lead_lag_death['death_percent']
+        reduction = 1.0 - lag_pct - lead_pct
+        death_base = 1.0 - death_pct
+
+        spot_array = np.array([np.asarray(images[c][row][col], dtype=np.float64).ravel()[:4]
+                               for c in range(num_cycles)])
+
         for cycle in range(start_cycle, end_cycle_exclusive):
-            min_error = float('inf')
-            best_window_seq = ""
+            spots = spot_array[cycle:cycle + window_size]
+            alive = death_base ** np.arange(cycle, cycle + window_size, dtype=np.float64)
 
-            for base_combination in product(range(4), repeat=window_size):
-                error = 0
+            expected = combo_colors * (alive[None, :, None] * reduction) + \
+                       lag_colors * lag_pct + lead_colors * lead_pct
+            diff = expected - spots[None, :, :]
+            errors = np.einsum('ijk,ijk->i', diff, diff)
 
-                for w in range(window_size):
-                    current_cycle = cycle + w
-                    spot_color = np.asarray(images[current_cycle][row][col], dtype=np.float64).ravel()[:4]
-                    base_color = np.array(base_colors[list(base_colors.keys())[base_combination[w]]])
-
-                    if w > 0:
-                        lagging_base_color = np.array(base_colors[list(base_colors.keys())[base_combination[w - 1]]])
-                    else:
-                        lagging_base_color = base_color
-
-                    if w < window_size - 1:
-                        leading_base_color = np.array(base_colors[list(base_colors.keys())[base_combination[w + 1]]])
-                    else:
-                        leading_base_color = base_color
-
-                    peak = float(base_color[np.argmax(base_color)])
-                    if peak < 1e-12:
-                        peak = 1e-12
-                    reduction_factor = 1 - np.sum(lagging_base_color * lead_lag_death['lag_percent']) / peak
-                    reduction_factor -= np.sum(leading_base_color * lead_lag_death['lead_percent']) / peak
-
-                    # Calculate the alive factor based on the death_percentage for the current cycle
-                    alive_factor = (1 - lead_lag_death['death_percent']) ** current_cycle
-
-                    # Multiply the base_color by the alive_factor
-                    base_color *= alive_factor
-
-                    expected_color = base_color * reduction_factor
-                    expected_color += lagging_base_color * lead_lag_death['lag_percent']
-                    expected_color += leading_base_color * lead_lag_death['lead_percent']
-
-                    error += np.sum((expected_color - spot_color) ** 2)
-
-                if error < min_error:
-                    min_error = error
-                    best_window_seq = base_combination
-
-            assembled_seq.append(list(base_colors.keys())[best_window_seq[middle_index]])
+            best_idx = int(np.argmin(errors))
+            assembled_seq.append(_BASE_KEYS[all_combos[best_idx, middle_index]])
 
         called_bases[seq_idx] = ''.join(assembled_seq)
 
     return called_bases
 
 def base_calling_multipass(images, num_cycles, key, num_templates, window_size, num_passes):
-    base_colors = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
-    base_color_key = {0: (255.0, 0.0, 0.0, 0.0), 1: (0.0, 255.0, 0.0, 0.0), 2: (0.0, 0.0, 255.0, 0.0), 3: (0.0, 0.0, 0.0, 255.0)}
-
     called_bases_passes = []
     middle_index = window_size // 2
     start_cycle = max(0, len(key) - window_size + middle_index + 1)
@@ -176,63 +146,43 @@ def base_calling_multipass(images, num_cycles, key, num_templates, window_size, 
     if len(key) < window_size or start_cycle >= end_cycle_exclusive:
         return [[key] * num_passes for _ in range(num_templates)]
 
+    all_combos, combo_colors, lag_colors, lead_colors = _get_combos(window_size)
+    image_dim = math.ceil(math.sqrt(num_templates))
+
     for seq_idx in range(num_templates):
-        row, col = divmod(seq_idx, math.ceil(math.sqrt(num_templates)))
+        row, col = divmod(seq_idx, image_dim)
+
+        spot_array = np.array([np.asarray(images[c][row][col], dtype=np.float64).ravel()[:4]
+                               for c in range(num_cycles)])
 
         assembled_seq_passes = []
         current_key = key
 
         for pass_idx in range(num_passes):
-            assembled_seq = []
             lead_lag_death = estimate_lead_lag_death(images, current_key, row, col, window_size)
+            lag_pct = lead_lag_death['lag_percent']
+            lead_pct = lead_lag_death['lead_percent']
+            death_pct = lead_lag_death['death_percent']
 
-            print(f"Pass {pass_idx + 1}: Lag: {lead_lag_death['lag_percent']:.2f}, Lead: {lead_lag_death['lead_percent']:.2f}, Death: {lead_lag_death['death_percent']:.2f}")
+            print(f"Pass {pass_idx + 1}: Lag: {lag_pct:.2f}, Lead: {lead_pct:.2f}, Death: {death_pct:.2f}")
 
+            reduction = 1.0 - lag_pct - lead_pct
+            death_base = 1.0 - death_pct
+
+            assembled_seq = []
             for cycle in range(start_cycle, end_cycle_exclusive):
-                min_error = float('inf')
-                best_window_seq = ""
+                spots = spot_array[cycle:cycle + window_size]
+                alive = death_base ** np.arange(cycle, cycle + window_size, dtype=np.float64)
 
-                for base_combination in product(range(4), repeat=window_size):
-                    error = 0
+                expected = combo_colors * (alive[None, :, None] * reduction) + \
+                           lag_colors * lag_pct + lead_colors * lead_pct
+                diff = expected - spots[None, :, :]
+                errors = np.einsum('ijk,ijk->i', diff, diff)
 
-                    for w in range(window_size):
-                        current_cycle = cycle + w
-                        spot_color = np.asarray(images[current_cycle][row][col], dtype=np.float64).ravel()[:4]
-                        base_color = np.array(base_color_key[base_combination[w]])
-
-                        if w > 0:
-                            lagging_base_color = np.array(base_color_key[base_combination[w - 1]])
-                        else:
-                            lagging_base_color = base_color
-
-                        if w < window_size - 1:
-                            leading_base_color = np.array(base_color_key[base_combination[w + 1]])
-                        else:
-                            leading_base_color = base_color
-
-                        peak = float(base_color[np.argmax(base_color)])
-                        if peak < 1e-12:
-                            peak = 1e-12
-                        reduction_factor = 1 - np.sum(lagging_base_color * lead_lag_death['lag_percent']) / peak
-                        reduction_factor -= np.sum(leading_base_color * lead_lag_death['lead_percent']) / peak
-
-                        alive_factor = (1 - lead_lag_death['death_percent']) ** current_cycle
-                        base_color *= alive_factor
-
-                        expected_color = base_color * reduction_factor
-                        expected_color += lagging_base_color * lead_lag_death['lag_percent']
-                        expected_color += leading_base_color * lead_lag_death['lead_percent']
-
-                        error += np.sum((expected_color - spot_color) ** 2)
-
-                    if error < min_error:
-                        min_error = error
-                        best_window_seq = base_combination
-
-                assembled_seq.append(list(base_colors.keys())[best_window_seq[middle_index]])
+                best_idx = int(np.argmin(errors))
+                assembled_seq.append(_BASE_KEYS[all_combos[best_idx, middle_index]])
 
             called_bases = key + "".join(assembled_seq)
-
             assembled_seq_passes.append(called_bases)
             current_key = called_bases
 
