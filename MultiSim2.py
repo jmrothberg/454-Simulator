@@ -16,6 +16,7 @@ from matplotlib.lines import Line2D
 # Base callers (imports are silent — run MultiSim2.py to drive the pipeline)
 from knn_caller4 import base_calling_knn
 from transformer8 import transformer_base_calling
+from causal_transformer import causal_transformer_base_calling
 from multipass3 import base_calling_multipass
 from lagleaddeath import estimate_lag_lead_percentages
 from cnn_caller import base_calling_cnn
@@ -539,7 +540,8 @@ if __name__ == "__main__":
     called_sequences_integrated = []
     called_sequences_multipass = []
     called_sequences_knn = []
-    called_sequences_transformer = []
+    called_sequences_bidir = []
+    called_sequences_causal = []
     called_sequences_new = []
 
     single_image_accuracy_sum = 0
@@ -553,7 +555,8 @@ if __name__ == "__main__":
         "multipass",
         "kNN",
         "cnn",
-        "transformer",
+        "bidir encoder",
+        "causal transformer",
         "new multi place holder do not select",
         "estimate lag, led, noise, death"
     ]
@@ -564,8 +567,8 @@ if __name__ == "__main__":
         print(f"{idx}. {method_name}")
     selected_methods_input = input("Enter indices separated by space, or 'all' / Enter to run all real methods: ").strip()
     if selected_methods_input == "" or selected_methods_input.lower() == "all":
-        # All real methods: 1-5 + 7 (skip placeholder #6)
-        selected_methods_indices = [1, 2, 3, 4, 5, 7]
+        # All real methods: 1-6 + 8 (skip placeholder #7)
+        selected_methods_indices = [1, 2, 3, 4, 5, 6, 8]
         auto_train = True   # skip interactive load/save prompts for ML callers
     else:
         selected_methods_indices = list(map(int, selected_methods_input.split()))
@@ -609,11 +612,18 @@ if __name__ == "__main__":
         called_sequences_knn = base_calling_knn(images, num_cycles, number_of_templates, vector_templates,
                                                 num_training_templates, window, k, auto_train=auto_train)
 
-    if selected_methods["transformer"]:
-        transformer_accuracy_sum_train = 0
-        transformer_accuracy_sum_test = 0
-        called_sequences_transformer = transformer_base_calling(images, num_cycles, number_of_templates,
-                                                                vector_templates, num_training_templates, window, auto_train=auto_train)
+    if selected_methods["bidir encoder"]:
+        bidir_accuracy_sum_train = 0
+        bidir_accuracy_sum_test = 0
+        called_sequences_bidir = transformer_base_calling(images, num_cycles, number_of_templates,
+                                                          vector_templates, num_training_templates, window, auto_train=auto_train)
+
+    if selected_methods["causal transformer"]:
+        causal_accuracy_sum_train = 0
+        causal_accuracy_sum_test = 0
+        called_sequences_causal = causal_transformer_base_calling(images, num_cycles, number_of_templates,
+                                                                  vector_templates, num_training_templates, window, auto_train=auto_train)
+
     if selected_methods["cnn"]:
             cnn_accuracy_sum_train = 0
             cnn_accuracy_sum_test = 0
@@ -659,16 +669,27 @@ if __name__ == "__main__":
                 knn_accuracy_sum_train += knn_accuracy
             print(f"kNN sequence {i + 1}                 : {knn_seq} (Accuracy: {knn_accuracy:.2f}%)")
 
-        if selected_methods.get("transformer"):
-            transformer_seq = called_sequences_transformer[i]
-            n_cmp = min(len(original_seq_bases), len(transformer_seq))
-            transformer_accuracy = sum(1 for t, c in zip(original_seq_bases, transformer_seq) if t == c) / max(n_cmp, 1) * 100
+        if selected_methods.get("bidir encoder"):
+            bidir_seq = called_sequences_bidir[i]
+            n_cmp = min(len(original_seq_bases), len(bidir_seq))
+            bidir_accuracy = sum(1 for t, c in zip(original_seq_bases, bidir_seq) if t == c) / max(n_cmp, 1) * 100
             if is_test:
-                transformer_accuracy_sum_test += transformer_accuracy
+                bidir_accuracy_sum_test += bidir_accuracy
             else:
-                transformer_accuracy_sum_train += transformer_accuracy
+                bidir_accuracy_sum_train += bidir_accuracy
             print(
-                f"Transformer Called sequence {i + 1}  : {transformer_seq} (Accuracy: {transformer_accuracy:.2f}%)")
+                f"Bidir Encoder sequence {i + 1}      : {bidir_seq} (Accuracy: {bidir_accuracy:.2f}%)")
+
+        if selected_methods.get("causal transformer"):
+            causal_seq = called_sequences_causal[i]
+            n_cmp = min(len(original_seq_bases), len(causal_seq))
+            causal_accuracy = sum(1 for t, c in zip(original_seq_bases, causal_seq) if t == c) / max(n_cmp, 1) * 100
+            if is_test:
+                causal_accuracy_sum_test += causal_accuracy
+            else:
+                causal_accuracy_sum_train += causal_accuracy
+            print(
+                f"Causal Transformer seq {i + 1}      : {causal_seq} (Accuracy: {causal_accuracy:.2f}%)")
 
         if selected_methods.get("cnn"):
             integrated_seq = called_sequences_integrated[i]
@@ -710,10 +731,15 @@ if __name__ == "__main__":
         acc_test  = knn_accuracy_sum_test  / max(num_test_templates, 1)
         print(f"kNN          TEST ({num_test_templates} unseen): {acc_test:.2f}%   (train {num_training_templates}: {acc_train:.2f}%)")
 
-    if selected_methods.get("transformer"):
-        acc_train = transformer_accuracy_sum_train / max(num_training_templates, 1)
-        acc_test  = transformer_accuracy_sum_test  / max(num_test_templates, 1)
-        print(f"Transformer  TEST ({num_test_templates} unseen): {acc_test:.2f}%   (train {num_training_templates}: {acc_train:.2f}%)")
+    if selected_methods.get("bidir encoder"):
+        acc_train = bidir_accuracy_sum_train / max(num_training_templates, 1)
+        acc_test  = bidir_accuracy_sum_test  / max(num_test_templates, 1)
+        print(f"Bidir Enc    TEST ({num_test_templates} unseen): {acc_test:.2f}%   (train {num_training_templates}: {acc_train:.2f}%)")
+
+    if selected_methods.get("causal transformer"):
+        acc_train = causal_accuracy_sum_train / max(num_training_templates, 1)
+        acc_test  = causal_accuracy_sum_test  / max(num_test_templates, 1)
+        print(f"Causal Trans TEST ({num_test_templates} unseen): {acc_test:.2f}%   (train {num_training_templates}: {acc_train:.2f}%)")
 
     if selected_methods.get("cnn"):
         acc_train = cnn_accuracy_sum_train / max(num_training_templates, 1)
@@ -801,9 +827,15 @@ if __name__ == "__main__":
                 f.write("Called_sequences_kNN: {}\n".format(called_sequences_knn))
                 f.write("Overall Accuracy (kNN Method)           : {:.2f}%\n".format(accuracy_knn))
 
-            if selected_methods.get("transformer"):
-                f.write("Called_sequences_transformer: {}\n".format(called_sequences_transformer))
-                f.write("Overall Accuracy (Transformer Method)   : {:.2f}%\n".format(accuracy_transformer))
+            if selected_methods.get("bidir encoder"):
+                f.write("Called_sequences_bidir: {}\n".format(called_sequences_bidir))
+                f.write("Overall Accuracy (Bidir Encoder Method) : {:.2f}%\n".format(
+                    bidir_accuracy_sum_test / max(num_test_templates, 1)))
+
+            if selected_methods.get("causal transformer"):
+                f.write("Called_sequences_causal: {}\n".format(called_sequences_causal))
+                f.write("Overall Accuracy (Causal Transformer)   : {:.2f}%\n".format(
+                    causal_accuracy_sum_test / max(num_test_templates, 1)))
 
             if selected_methods.get("new multi place holder do not select"):
                 f.write("called_sequences_new: {}\n".format(called_sequences_new))

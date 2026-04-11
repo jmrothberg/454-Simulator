@@ -1,4 +1,8 @@
-#Transformer_base_calling images to letter bases for 454.Bio.  JMR April 5 2023
+# Bidirectional Window Encoder ("BERT-style") base caller for 454.Bio.
+# NOT autoregressive: uses a fixed-size window with bidirectional self-attention
+# (every position sees every other position).  Predicts all positions in the
+# window simultaneously and keeps the center position as the final call.
+# JMR April 5 2023
 
 import math
 import os
@@ -103,7 +107,9 @@ def _transformer_block(x, d_model, num_heads, ff_dim, dropout_rate=0.2):
 
 
 def _build_and_train_transformer(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors):
-    """Build a new transformer model, train it on the current images, and return (model, window_size)."""
+    """Build a bidirectional window encoder (NOT autoregressive).
+    Uses full self-attention within a fixed window — every position sees every other.
+    Returns (model, window_size)."""
     X_train, y_train = create_training_set(images, num_templates, templates, num_training_templates, window_size, num_cycles, base_colors)
 
     d_model = 64
@@ -127,7 +133,9 @@ def _build_and_train_transformer(images, num_templates, templates, num_training_
 
 
 def transformer_base_calling(images, num_cycles, num_templates, templates, num_training_templates, window_size, auto_train=False):
-    print("transformer_base_calling")
+    """Bidirectional Window Encoder — slides a fixed window across cycles,
+    predicts all positions with full (non-causal) self-attention, keeps center."""
+    print("Bidirectional Window Encoder base calling")
     base_colors = {
         'A': (1.0, 0.0, 0.0, 0.0),
         'C': (0.0, 1.0, 0.0, 0.0),

@@ -53,8 +53,9 @@ def base_calling_uncertain_lag_lead(images, num_cycles, lag_percent, lead_percen
             spots = spot_array[cycle:cycle + window_size]
             alive = death_base ** np.arange(cycle, cycle + window_size, dtype=np.float64)
 
-            expected = combo_colors * (alive[None, :, None] * reduction) + \
-                       lag_colors * lag_percent + lead_colors * lead_percent
+            # All signal (main + lag + lead) comes from alive strands
+            expected = (combo_colors * reduction + lag_colors * lag_percent + lead_colors * lead_percent) \
+                       * alive[None, :, None]
             diff = expected - spots[None, :, :]
             errors = np.einsum('ijk,ijk->i', diff, diff)
 

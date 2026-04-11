@@ -125,8 +125,9 @@ def base_calling_integrated(images, num_cycles, key, num_templates, window_size)
             spots = spot_array[cycle:cycle + window_size]
             alive = death_base ** np.arange(cycle, cycle + window_size, dtype=np.float64)
 
-            expected = combo_colors * (alive[None, :, None] * reduction) + \
-                       lag_colors * lag_pct + lead_colors * lead_pct
+            # All signal (main + lag + lead) comes from alive strands
+            expected = (combo_colors * reduction + lag_colors * lag_pct + lead_colors * lead_pct) \
+                       * alive[None, :, None]
             diff = expected - spots[None, :, :]
             errors = np.einsum('ijk,ijk->i', diff, diff)
 
@@ -174,8 +175,9 @@ def base_calling_multipass(images, num_cycles, key, num_templates, window_size, 
                 spots = spot_array[cycle:cycle + window_size]
                 alive = death_base ** np.arange(cycle, cycle + window_size, dtype=np.float64)
 
-                expected = combo_colors * (alive[None, :, None] * reduction) + \
-                           lag_colors * lag_pct + lead_colors * lead_pct
+                # All signal (main + lag + lead) comes from alive strands
+                expected = (combo_colors * reduction + lag_colors * lag_pct + lead_colors * lead_pct) \
+                           * alive[None, :, None]
                 diff = expected - spots[None, :, :]
                 errors = np.einsum('ijk,ijk->i', diff, diff)
 

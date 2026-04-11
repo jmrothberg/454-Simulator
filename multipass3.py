@@ -41,8 +41,8 @@ def _param_objective(params, ideal_colors_list, observed_spots_list, seq_len_lis
             lag_c = ideal[c - 1] if c > 0 else base
             lead_c = ideal[c + 1] if c < slen - 1 else base
             alive = (1.0 - death_pct) ** c
-            expected = base * alive * (1.0 - lag_pct - lead_pct) + \
-                       lag_c * lag_pct + lead_c * lead_pct + noise_floor
+            # All signal (main + lag + lead) comes from ALIVE strands; dead strands contribute nothing
+            expected = (base * (1.0 - lag_pct - lead_pct) + lag_c * lag_pct + lead_c * lead_pct) * alive + noise_floor
             diff = expected - spots[c]
             total_error += float(np.dot(diff, diff))
     return total_error
@@ -148,25 +148,18 @@ def base_calling_multipass(images, num_cycles, key, num_templates, window_size, 
             death_base = 1.0 - death_pct
 
             # Consensus voting: each window votes for ALL its positions, weighted by
-            # confidence.  Normalizing to unit vectors before comparison focuses on
-            # which-base (direction) rather than how-much-signal (amplitude), making
-            # the method robust to imprecise death estimates at late cycles.
+            # confidence.  L2 comparison with correct alive-scaled physics model.
             base_votes = np.zeros((num_cycles, 4), dtype=np.float64)
 
             for cycle in range(start_cycle, end_cycle_exclusive):
                 spots = spot_array[cycle:cycle + window_size]  # (ws, 4)
                 alive = death_base ** np.arange(cycle, cycle + window_size, dtype=np.float64)
 
-                expected = combo_colors * (alive[None, :, None] * reduction) + \
-                           lag_colors * lag_pct + lead_colors * lead_pct + noise_floor
+                # All signal (main + lag + lead) comes from alive strands
+                expected = (combo_colors * reduction + lag_colors * lag_pct + lead_colors * lead_pct) \
+                           * alive[None, :, None] + noise_floor
 
-                # Normalize both to unit vectors for direction-based matching
-                s_norm = np.linalg.norm(spots, axis=1, keepdims=True)
-                s_norm = np.maximum(s_norm, 1e-12)
-                e_norm = np.linalg.norm(expected, axis=2, keepdims=True)
-                e_norm = np.maximum(e_norm, 1e-12)
-
-                diff = (expected / e_norm) - (spots / s_norm)[None, :, :]
+                diff = expected - spots[None, :, :]
                 errors = np.einsum('ijk,ijk->i', diff, diff)
 
                 best_idx = int(np.argmin(errors))
