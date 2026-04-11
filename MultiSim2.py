@@ -21,9 +21,6 @@ from multipass3 import base_calling_multipass
 from lagleaddeath import estimate_lag_lead_percentages
 from cnn_caller import base_calling_cnn
 
-#place holder an iterative base caller, that returns all the cycle information
-'''print ("import new multi ")
-from new import new_multi_pass '''
 def get_rgb_from_four_color_channels(a, c, g, t):
     r = t + a
     green = c + a
@@ -542,7 +539,6 @@ if __name__ == "__main__":
     called_sequences_knn = []
     called_sequences_bidir = []
     called_sequences_causal = []
-    called_sequences_new = []
 
     single_image_accuracy_sum = 0
     integrated_accuracy_sum = 0
@@ -557,7 +553,6 @@ if __name__ == "__main__":
         "cnn",
         "bidir encoder",
         "causal transformer",
-        "new multi place holder do not select",
         "estimate lag, led, noise, death"
     ]
 
@@ -567,8 +562,8 @@ if __name__ == "__main__":
         print(f"{idx}. {method_name}")
     selected_methods_input = input("Enter indices separated by space, or 'all' / Enter to run all real methods: ").strip()
     if selected_methods_input == "" or selected_methods_input.lower() == "all":
-        # All real methods: 1-6 + 8 (skip placeholder #7)
-        selected_methods_indices = [1, 2, 3, 4, 5, 6, 8]
+        # All real methods: 1-6 + 7 (estimate lag/lead/death)
+        selected_methods_indices = [1, 2, 3, 4, 5, 6, 7]
         auto_train = True   # skip interactive load/save prompts for ML callers
     else:
         selected_methods_indices = list(map(int, selected_methods_input.split()))
@@ -628,10 +623,6 @@ if __name__ == "__main__":
             cnn_accuracy_sum_train = 0
             cnn_accuracy_sum_test = 0
             called_sequences_integrated = base_calling_cnn(images, num_cycles, number_of_templates, vector_templates, num_training_templates, window, num_passes, auto_train=auto_train)
-
-    if selected_methods["new multi place holder do not select"]:
-        new_accuracy_sums = [0] * num_passes
-        #called_sequences_new = base_calling_new (images, num_cycles, number_of_templates, vector_templates, num_training_templates, window, num_passes)
 
     num_test_templates = number_of_templates - num_training_templates
 
@@ -701,14 +692,6 @@ if __name__ == "__main__":
                 cnn_accuracy_sum_train += integrated_accuracy
             print(f"cnn Called sequence {i + 1}          : {integrated_seq} (Accuracy: {integrated_accuracy:.2f}%)")
 
-        if selected_methods.get("new multi place holder do not select"):
-            hmm_seqs = called_sequences_new [i]
-            for p, new_seq in enumerate(hmm_seqs):
-                n_cmp = min(len(original_seq_bases), len(new_seq))
-                new_accuracy = sum(1 for t, c in zip(original_seq_bases, new_seq) if t == c) / max(n_cmp, 1) * 100
-                new_accuracy_sums[p] += new_accuracy
-                print(f"cnn Called sequence {i + 1} (Pass {p + 1}) : {new_seq} (Accuracy: {new_accuracy:.2f}%)")
-
     # Calculate the overall accuracy for each method
     # Physics methods: all templates are unseen (no training data used)
     # ML methods: report TEST-only accuracy (templates the model never trained on)
@@ -745,12 +728,6 @@ if __name__ == "__main__":
         acc_train = cnn_accuracy_sum_train / max(num_training_templates, 1)
         acc_test  = cnn_accuracy_sum_test  / max(num_test_templates, 1)
         print(f"CNN          TEST ({num_test_templates} unseen): {acc_test:.2f}%   (train {num_training_templates}: {acc_train:.2f}%)")
-
-    if selected_methods.get("new multi place holder do not select"):
-        accuracy_new = [sum_acc / number_of_templates for sum_acc in new_accuracy_sums]
-        for p, acc in enumerate(accuracy_new):
-            print(f"Overall Accuracy (new Method, Pass {p + 1}): {acc:.2f}%")
-            newlastpassaccuracy = acc
 
     print(f"{'='*70}")
 
@@ -836,10 +813,6 @@ if __name__ == "__main__":
                 f.write("Called_sequences_causal: {}\n".format(called_sequences_causal))
                 f.write("Overall Accuracy (Causal Transformer)   : {:.2f}%\n".format(
                     causal_accuracy_sum_test / max(num_test_templates, 1)))
-
-            if selected_methods.get("new multi place holder do not select"):
-                f.write("called_sequences_new: {}\n".format(called_sequences_new))
-                f.write("Overall Accuracy (new multi method last pass ): {:.2f}%\n".format(newlastpassaccuracy))
 
     if method_choice == "1":
         save_strands = input("Y or any key to save strands (or hit return to skip): ")

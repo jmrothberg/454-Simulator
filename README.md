@@ -66,10 +66,9 @@ When prompted for **indices of the methods** (space-separated), the menu is:
 | 4 | **cnn** | **1D CNN** with **per-position prediction** (4 bases per window position, not 1024 combo classes). Three `Conv1D(padding='same')` layers preserve window dimension; per-position softmax output. **EarlyStopping** (patience 6). Saves `.h5` weights + `.pkl` metadata in `Sim Models/`. |
 | 5 | **bidir encoder** | **Bidirectional Window Encoder (BERT-style, NOT autoregressive)**. Slides a fixed window (default 5 cycles) with **full bidirectional self-attention** — every position sees every other. 3 encoder blocks (64-dim, 4 heads, 128-unit FFN), per-position softmax; takes the **center position** as the call. **Auto-checkpoint**: warm-starts from `_auto_transformer_w{ws}.h5`. Implemented in `transformer8.py`. |
 | 6 | **causal transformer** | **Real autoregressive (GPT-style) transformer**. Processes the **full read** (all cycles) in one forward pass. **Causal masking**: position *t* can only attend to cycles 0..*t* (past + self). 4 causal blocks (64-dim, 4 heads, 128-unit FFN), **sinusoidal positional encoding**, per-position softmax. **Auto-checkpoint**: saves to `_auto_causal_transformer_c{cycles}.h5`; warm-starts with lower LR. Implemented in `causal_transformer.py`. |
-| 7 | **new multi** (placeholder) | Reserved; do not select for real runs. |
-| 8 | **estimate lag, lead, noise, death** | Runs **`lagleaddeath.estimate_lag_lead_percentages`**: **L-BFGS-B** fits global lag, lead, death, and a small coupling scale to match images to the **key** (deterministic forward model—no RNG inside the objective). Prints **sensitivity indices** (how much the predicted vector moves under small lag/lead/death bumps, relative to fit residual)—not literal “noise %.” |
+| 7 | **estimate lag, lead, noise, death** | Runs **`lagleaddeath.estimate_lag_lead_percentages`**: **L-BFGS-B** fits global lag, lead, death, and a small coupling scale to match images to the **key** (deterministic forward model—no RNG inside the objective). Prints **sensitivity indices** (how much the predicted vector moves under small lag/lead/death bumps, relative to fit residual)—not literal “noise %.” |
 
-**Default run:** press **Enter** (or type `all`) to run methods 1–6 + 8 automatically. All ML callers train fresh (or warm-start from their checkpoints) without interactive prompts.
+**Default run:** press **Enter** (or type `all`) to run all 7 methods automatically. All ML callers train fresh (or warm-start from their checkpoints) without interactive prompts.
 
 ---
 
